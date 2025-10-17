@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Simple Hours (PWA)</title>
+  <meta name="theme-color" content="#0a84ff" />
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    :root { --accent:#0a84ff; --bg:#0b0b10; --card:#15151c; --text:#f4f6f8; --muted:#a9b0bb; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+    header { display:flex; align-items:center; justify-content:space-between; padding:16px 0; }
+    h1 { font-size: 22px; margin: 0; }
+    button.primary { width:100%; padding:18px 16px; font-size:22px; font-weight:600; border-radius:14px; border:none; background: var(--accent); color:white; }
+    button.primary:active { transform: translateY(1px); }
+    .status { text-align:center; margin: 8px 0 16px; color: var(--muted); }
+    .timer { text-align:center; font: 700 44px/1.1 ui-rounded, SF Pro Rounded, system-ui; letter-spacing:1px; margin: 0 0 8px; }
+    .card { background: var(--card); border-radius:12px; padding:14px; }
+    .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #222532; }
+    .row:last-child { border-bottom:none; }
+    .muted { color: var(--muted); }
+    .list { margin-top:14px; }
+    .item { padding:12px 0; border-bottom:1px solid #222532; }
+    .item:last-child { border-bottom:none; }
+    .item h3 { margin:0 0 6px; font-size:16px; }
+    .small { font-size:12px; color: var(--muted); }
+    .actions { display:flex; gap:8px; margin-top:8px; }
+    .btn { padding:8px 10px; border-radius:10px; border:1px solid #2b2f3c; background:#191a22; color:#e6e9ef; font-size:13px; }
+    .btn.danger { border-color:#3a2330; background:#24161d; color:#ff8aa1; }
+    dialog { border:1px solid #2b2f3c; border-radius:12px; background:#12131a; color:var(--text); max-width:480px; width:calc(100% - 32px); }
+    dialog::backdrop { background: rgba(0,0,0,0.5); }
+    label { display:block; margin:10px 0 6px; }
+    input[type="number"], input[type="text"], textarea {
+      width:100%; padding:10px; border-radius:10px; border:1px solid #2b2f3c; background:#0f1016; color:var(--text);
+    }
+    .footer-note { margin-top:14px; font-size:12px; color:var(--muted); text-align:center; }
+    a { color:#8bc2ff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Simple Hours</h1>
+      <div class="toolbar">
+        <button class="btn" id="btnExport">Export CSV</button>
+        <button class="btn" id="btnClear">Clear All</button>
+      </div>
+    </header>
+
+    <div class="status" id="status">Off the clock</div>
+    <div class="timer" id="timer">—</div>
+    <button class="primary" id="toggleBtn">Clock In</button>
+
+    <div style="height:12px"></div>
+
+    <div class="card">
+      <div class="row"><span>This Week</span><strong id="weekTotal">0m</strong></div>
+      <div class="row"><span>This Month</span><strong id="monthTotal">0m</strong></div>
+    </div>
+
+    <div class="list card" style="margin-top:12px;">
+      <h2 style="margin:0 0 8px;font-size:18px;">History</h2>
+      <div id="history"></div>
+    </div>
+
+    <p class="footer-note">
+      Install this app: In Safari → <em>Share ▸ Add to Home Screen</em>.  
+      Works offline. Data stays on your device.
+    </p>
+  </div>
+
+  <!-- Breaks dialog -->
+  <dialog id="breaksDlg">
+    <form method="dialog">
+      <h3>Breaks for this session</h3>
+      <div class="small" id="breaksInfo"></div>
+      <label>Number of breaks</label>
+      <input type="number" id="breakCount" min="0" max="20" step="1" value="0">
+      <label>Total break minutes</label>
+      <input type="number" id="breakMinutes" min="0" max="480" step="1" value="0">
+      <label>Note (optional)</label>
+      <input type="text" id="breakNote" placeholder="e.g. Site A, overtime, etc.">
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="btn" id="skipBreaks">Skip</button>
+        <button class="btn" id="saveBreaks">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Edit dialog -->
+  <dialog id="editDlg">
+    <form method="dialog">
+      <h3>Edit Session</h3>
+      <div class="small" id="editWhen"></div>
+      <label>Number of breaks</label>
+      <input type="number" id="editBreakCount" min="0" max="20" step="1">
+      <label>Total break minutes</label>
+      <input type="number" id="editBreakMinutes" min="0" max="480" step="1">
+      <label>Note</label>
+      <textarea id="editNote" rows="2"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="btn" id="cancelEdit">Cancel</button>
+        <button class="btn" id="saveEdit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+  // ---- Storage (local only) -------------------------------------------------
+  const KEY = 'simple-hours-sessions-v1';
+  let sessions = JSON.parse(localStorage.getItem(KEY) || '[]');
+  function persist() { localStorage.setItem(KEY, JSON.stringify(sessions)); }
+
+  // ---- Helpers --------------------------------------------------------------
+  const $ = sel => document.querySelector(sel);
+  const fmtDT = d => new Date(d).toLocaleString();
+  const fmtHM = minutes => {
+    minutes = Math.max(0, Math.floor(minutes));
+    const h = Math.floor(minutes/60), m = minutes % 60;
+    return h ? `${h}h ${m}m` : `${m}m`;
+  };
+  const durMins = (s, e) => Math.max(0, Math.round((new Date(e)-new Date(s))/60000));
+  const netMins = s => Math.max(0, durMins(s.start, s.end ?? new Date()) - (s.breakMinutes||0));
+  const isOpen = s => s.end === null;
+
+  function startOfWeek(d=new Date()) {
+    const x=new Date(d); const day=(x.getDay()+6)%7; // Mon=0
+    x.setHours(0,0,0,0); x.setDate(x.getDate()-day); return x;
+  }
+  function startOfMonth(d=new Date()) { const x=new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
+
+  // ---- UI Elements ----------------------------------------------------------
+  const statusEl = $('#status'), timerEl = $('#timer'), toggleBtn = $('#toggleBtn');
+  const weekTotalEl = $('#weekTotal'), monthTotalEl = $('#monthTotal'), historyEl = $('#history');
+  let tickHandle = null;
+
+  function refresh() {
+    const open = sessions.find(isOpen);
+    if (open) {
+      statusEl.textContent = 'On the clock';
+      toggleBtn.textContent = 'Clock Out';
+      updateTimer(open.start);
+      if (!tickHandle) tickHandle = setInterval(()=>updateTimer(open.start), 1000);
+    } else {
+      statusEl.textContent = 'Off the clock';
+      toggleBtn.textContent = 'Clock In';
+      timerEl.textContent = '—';
+      if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+    }
+    renderTotals();
+    renderHistory();
+  }
+
+  function updateTimer(startISO) {
+    const diff = Math.max(0, Math.floor((Date.now() - new Date(startISO))/1000));
+    const h = String(Math.floor(diff/3600)).padStart(2,'0');
+    const m = String(Math.floor((diff%3600)/60)).padStart(2,'0');
+    const s = String(diff%60).padStart(2,'0');
+    timerEl.textContent = `${h}:${m}:${s}`;
+  }
+
+  function renderTotals() {
+    const w0 = startOfWeek(), m0 = startOfMonth();
+    const week = sessions.filter(s => (new Date(s.start)) >= w0 && s.end).reduce((a,s)=>a+netMins(s),0);
+    const month = sessions.filter(s => (new Date(s.start)) >= m0 && s.end).reduce((a,s)=>a+netMins(s),0);
+    weekTotalEl.textContent = fmtHM(week);
+    monthTotalEl.textContent = fmtHM(month);
+  }
+
+  function renderHistory() {
+    if (!sessions.length) { historyEl.innerHTML = '<div class="small muted">No sessions yet.</div>'; return; }
+    const rows = sessions.slice().reverse().map(s => {
+      const endText = s.end ? fmtDT(s.end) : '(running)';
+      const net = s.end ? fmtHM(netMins(s)) : '—';
+      const breaks = s.breakMinutes ? ` − ${s.breakMinutes}m breaks (${s.breakCount||0})` : '';
+      const note = s.note ? `<div class="small">${escapeHTML(s.note)}</div>` : '';
+      return `
+        <div class="item" data-id="${s.id}">
+          <h3>${fmtDT(s.start)} → ${endText}</h3>
+          <div class="small">Worked (net): <strong>${net}</strong>${breaks}</div>
+          ${note}
+          <div class="actions">
+            ${s.end ? '<button class="btn btn-edit">Edit</button>' : ''}
+            <button class="btn danger btn-delete">Delete</button>
+          </div>
+        </div>`;
+    }).join('');
+    historyEl.innerHTML = rows;
+    historyEl.querySelectorAll('.btn-delete').forEach(btn => btn.addEventListener('click', onDelete));
+    historyEl.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', onEdit));
+  }
+
+  function escapeHTML(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // ---- Actions --------------------------------------------------------------
+  toggleBtn.addEventListener('click', () => {
+    const open = sessions.find(isOpen);
+    if (open) {
+      open.end = new Date().toISOString();
+      persist();
+      openBreaksDialog(open);
+    } else {
+      sessions.filter(isOpen).forEach(s => s.end = new Date().toISOString());
+      sessions.push({ id: crypto.randomUUID(), start: new Date().toISOString(), end: null, breakCount: 0, breakMinutes: 0, note: "" });
+      persist();
+    }
+    refresh();
+  });
+
+  function onDelete(e) {
+    const id = e.target.closest('.item').dataset.id;
+    sessions = sessions.filter(s => s.id !== id);
+    persist(); refresh();
+  }
+
+  // ---- Breaks dialog --------------------------------------------------------
+  const dlg = $('#breaksDlg'), breaksInfo = $('#breaksInfo');
+  const breakCount = $('#breakCount'), breakMinutes = $('#breakMinutes'), breakNote = $('#breakNote');
+  $('#skipBreaks').addEventListener('click', () => dlg.close());
+  $('#saveBreaks').addEventListener('click', () => {
+    if (!dlg._session) return;
+    const s = dlg._session;
+    s.breakCount = clamp(parseInt(breakCount.value||'0',10),0,20);
+    s.breakMinutes = clamp(parseInt(breakMinutes.value||'0',10),0,480);
+    s.note = breakNote.value || "";
+    persist(); dlg.close(); refresh();
+  });
+  function openBreaksDialog(session) {
+    const raw = durMins(session.start, session.end);
+    breaksInfo.textContent = `Raw: ${fmtHM(raw)}  •  Set total break minutes and optional note.`;
+    breakCount.value = session.breakCount || 0;
+    breakMinutes.value = session.breakMinutes || 0;
+    breakNote.value = session.note || '';
+    dlg._session = session;
+    dlg.showModal();
+  }
+  function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+  // ---- Edit dialog ----------------------------------------------------------
+  const editDlg = $('#editDlg'), editWhen = $('#editWhen'), editBreakCount = $('#editBreakCount'),
+        editBreakMinutes = $('#editBreakMinutes'), editNote = $('#editNote');
+  $('#cancelEdit').addEventListener('click', () => editDlg.close());
+  $('#saveEdit').addEventListener('click', () => {
+    const s = editDlg._session;
+    if (!s) return;
+    s.breakCount = clamp(parseInt(editBreakCount.value||'0',10),0,20);
+    s.breakMinutes = clamp(parseInt(editBreakMinutes.value||'0',10),0,480);
+    s.note = editNote.value || "";
+    persist(); editDlg.close(); refresh();
+  });
+  function onEdit(e) {
+    const id = e.target.closest('.item').dataset.id;
+    const s = sessions.find(x => x.id === id);
+    if (!s) return;
+    editDlg._session = s;
+    editWhen.textContent = `${fmtDT(s.start)} → ${fmtDT(s.end)}`;
+    editBreakCount.value = s.breakCount || 0;
+    editBreakMinutes.value = s.breakMinutes || 0;
+    editNote.value = s.note || "";
+    editDlg.showModal();
+  }
+
+  // ---- Export CSV -----------------------------------------------------------
+  $('#btnExport').addEventListener('click', () => {
+    const header = "id,start,end,raw_minutes,break_count,break_minutes,net_minutes,note\n";
+    const lines = sessions.map(s => {
+      const raw = s.end ? durMins(s.start, s.end) : 0;
+      const net = s.end ? netMins(s) : 0;
+      const note = (s.note||"").replaceAll('"','""');
+      return `${s.id},${s.start},${s.end??""},${raw},${s.breakCount||0},${s.breakMinutes||0},${net},"${note}"`;
+    }).join("\n");
+    const blob = new Blob([header + lines], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href:url, download:`hours-${Date.now()}.csv` });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+
+  // ---- Clear all ------------------------------------------------------------
+  $('#btnClear').addEventListener('click', () => {
+    if (confirm('Delete all sessions? This cannot be undone.')) {
+      sessions = []; persist(); refresh();
+    }
+  });
+
+  // ---- PWA SW ---------------------------------------------------------------
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+  }
+
+  refresh();
+  </script>
+</body>
+</html>
