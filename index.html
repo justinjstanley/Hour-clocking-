@@ -40,14 +40,11 @@
     }
     .row2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
     canvas { width:100%; height:220px; background:#0f1016; border-radius:10px; border:1px solid #2b2f3c; }
-    .footer-note { margin-top:14px; font-size:12px; color:var(--muted); text-align:center; }
-
-    /* Breakdown table (reports) */
+    .footer-note { margin-top:14px; font-size:12px; color: var(--muted); text-align:center; }
     table { width:100%; border-collapse: collapse; margin-top:8px; }
     th, td { border:1px solid #2b2f3c; padding:8px; text-align:left; font-size:13px; }
     th { background:#0f1016; }
     .weekHeader { margin-top:12px; font-weight:700; }
-
     @media (max-width:420px){ .toolbar { gap:6px; } }
   </style>
 </head>
@@ -97,10 +94,8 @@
       <h3>Add Shift</h3>
       <label>Start time <span class="small">(required)</span></label>
       <input type="datetime-local" id="addStart" required>
-
       <label>End time <span class="small">(optional — leave blank for a running shift)</span></label>
       <input type="datetime-local" id="addEnd">
-
       <div class="row2">
         <div>
           <label>Breaks (count)</label>
@@ -111,10 +106,8 @@
           <input type="number" id="addBreakMinutes" min="0" max="480" step="1" value="0">
         </div>
       </div>
-
       <label>Note</label>
       <input type="text" id="addNote" placeholder="optional">
-
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
         <button class="btn" id="cancelAddShift">Cancel</button>
         <button class="btn" id="saveAddShift">Save Shift</button>
@@ -145,13 +138,10 @@
     <form method="dialog">
       <h3>Edit Session</h3>
       <div class="small" id="editWhen"></div>
-
       <label>Start time <span class="small">(leave blank to keep)</span></label>
       <input type="datetime-local" id="editStart">
-
       <label>End time <span class="small">(leave blank to keep / clear to make running)</span></label>
       <input type="datetime-local" id="editEnd">
-
       <label>Number of breaks</label>
       <input type="number" id="editBreakCount" min="0" max="20" step="1">
       <label>Total break minutes</label>
@@ -170,16 +160,9 @@
     <form method="dialog">
       <h3>Report & Export</h3>
       <div class="row2">
-        <div>
-          <label>From date</label>
-          <input type="date" id="repFrom">
-        </div>
-        <div>
-          <label>To date</label>
-          <input type="date" id="repTo">
-        </div>
+        <div><label>From date</label><input type="date" id="repFrom"></div>
+        <div><label>To date</label><input type="date" id="repTo"></div>
       </div>
-
       <div class="row2" style="margin-top:8px;">
         <button class="btn" id="presetThisWeek" type="button">This Week</button>
         <button class="btn" id="presetThisMonth" type="button">This Month</button>
@@ -188,25 +171,20 @@
         <button class="btn" id="presetLastWeek" type="button">Last Week</button>
         <button class="btn" id="presetLastMonth" type="button">Last Month</button>
       </div>
-
       <label style="margin-top:8px;">Chart totals</label>
       <select id="repGroup">
         <option value="week">Weekly</option>
         <option value="month">Monthly</option>
         <option value="none">None</option>
       </select>
-
       <div class="small" id="repSummary" style="margin-top:8px;"></div>
       <div style="margin-top:8px;"><canvas id="repChart" width="480" height="240"></canvas></div>
-
       <label style="margin-top:10px;">Weekly breakdown table (Mon–Sun)</label>
       <div id="weeklyTable"></div>
-
       <div class="row2" style="margin-top:10px;">
         <button class="btn" id="downloadCSV" type="button">Download CSV</button>
         <button class="btn" id="printBreakdown" type="button">Print Breakdown</button>
       </div>
-
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
         <button class="btn" id="closeReport">Close</button>
       </div>
@@ -214,12 +192,40 @@
   </dialog>
 
   <script>
-  // ---------- Storage ----------
-  const KEY='simple-hours-sessions-v3';
-  let sessions=JSON.parse(localStorage.getItem(KEY)||'[]');
-  const persist=()=>localStorage.setItem(KEY, JSON.stringify(sessions));
+  /* ---------- Storage (stable key + migration) ---------- */
+  const STABLE_KEY = 'simple-hours-sessions';
+  const OLD_KEYS = ['simple-hours-sessions-v1','simple-hours-sessions-v2','simple-hours-sessions-v3'];
 
-  // ---------- Helpers ----------
+  function loadSessions() {
+    const stable = localStorage.getItem(STABLE_KEY);
+    if (stable) return JSON.parse(stable || '[]');
+
+    let merged = [];
+    for (const k of OLD_KEYS) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) merged = merged.concat(arr);
+      } catch {}
+    }
+    const map = new Map();
+    merged.forEach(s => { if (s && s.id) { const prev = map.get(s.id); if (!prev || new Date(s.start) > new Date(prev.start)) map.set(s.id, s); }});
+    const result = Array.from(map.values());
+    localStorage.setItem(STABLE_KEY, JSON.stringify(result));
+    OLD_KEYS.forEach(k => localStorage.removeItem(k));
+    return result;
+  }
+  let sessions = loadSessions();
+  function persist(){ localStorage.setItem(STABLE_KEY, JSON.stringify(sessions)); }
+
+  try {
+    localStorage.setItem('__hours_test','1');
+    if (localStorage.getItem('__hours_test') !== '1') alert('Heads up: storage may not persist (Private mode?).');
+    localStorage.removeItem('__hours_test');
+  } catch { alert('Storage is blocked: shifts cannot be saved on this device.'); }
+
+  /* ---------- Helpers ---------- */
   const $=s=>document.querySelector(s);
   const fmtDT=d=>new Date(d).toLocaleString();
   const fmtHM=m=>{ m=Math.max(0,Math.floor(m)); const h=(m/60|0), mm=(m%60); return h?`${h}h ${mm}m`:`${mm}m`; };
@@ -227,7 +233,6 @@
   const durMins=(s,e)=>Math.max(0, Math.round((new Date(e)-new Date(s))/60000));
   const isOpen=s=>s.end===null;
   const running=()=>sessions.find(isOpen)||null;
-
   function netMins(session, includeLiveBreak=false){
     const end = session.end ?? new Date();
     let mins = durMins(session.start, end) - (session.breakMinutes||0);
@@ -236,7 +241,6 @@
     }
     return Math.max(0, mins);
   }
-
   function startOfWeek(d=new Date()){ const x=new Date(d); const wd=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-wd); return x; }
   function endOfWeek(d=new Date()){ const m=startOfWeek(d); const s=new Date(m); s.setDate(s.getDate()+6); s.setHours(23,59,59,999); return s; }
   function startOfMonth(d=new Date()){ const x=new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
@@ -246,7 +250,7 @@
   function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
   function escapeHTML(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-  // ---------- UI refs ----------
+  /* ---------- UI refs ---------- */
   const statusEl=$('#status'), timerEl=$('#timer'), toggleBtn=$('#toggleBtn');
   const weekTotalEl=$('#weekTotal'), monthTotalEl=$('#monthTotal'), historyEl=$('#history');
   const runningControls=$('#runningControls'), btnStartBreak=$('#btnStartBreak'), btnEndBreak=$('#btnEndBreak'), breakHint=$('#breakHint');
@@ -254,22 +258,16 @@
 
   let tickHandle=null, midnightTimer=null;
 
-  // ---------- Midnight auto-split ----------
+  /* ---------- Midnight auto-split ---------- */
   function normalizeMidnightSplits(){
     const s = running();
     if(!s) return;
-
-    // Handle past midnights (if app was closed)
     let lastMidnight = new Date(); lastMidnight.setHours(0,0,0,0);
     let boundary = new Date(s.start); boundary.setHours(0,0,0,0);
     while(boundary < lastMidnight){
       const splitAt = new Date(boundary); splitAt.setDate(splitAt.getDate()+1);
       const prevEnd = new Date(splitAt); prevEnd.setMinutes(prevEnd.getMinutes()-1);
-
-      // End current session at 23:59
       s.end = prevEnd.toISOString();
-
-      // Carry an ongoing break if needed
       let carryBreak = null;
       if(s.currentBreakStart){
         const add = durMins(s.currentBreakStart, prevEnd);
@@ -277,8 +275,6 @@
         carryBreak = splitAt.toISOString();
         s.currentBreakStart = null;
       }
-
-      // Start a new running session at 00:00
       const newS = {
         id: crypto.randomUUID(),
         start: splitAt.toISOString(),
@@ -288,15 +284,11 @@
         note: s.note || "",
         currentBreakStart: carryBreak
       };
-      sessions.push(newS);
-      persist();
-
-      // Continue loop with the new session
+      sessions.push(newS); persist();
       Object.assign(s, newS);
       sessions = sessions.filter(x => x.id !== newS.id).concat([s]);
       boundary = new Date(s.start); boundary.setHours(0,0,0,0);
     }
-
     scheduleNextMidnightSplit();
   }
   function scheduleNextMidnightSplit(){
@@ -307,20 +299,16 @@
     midnightTimer = setTimeout(()=>{ normalizeMidnightSplits(); refresh(); }, next - now);
   }
 
-  // ---------- Core UI ----------
+  /* ---------- Core UI ---------- */
   function refresh(){
     const open=running();
-
-    // Running controls
     runningControls.style.display = open ? 'flex' : 'none';
     if(open){
       const onBreak = !!open.currentBreakStart;
       btnStartBreak.style.display = onBreak ? 'none' : 'inline-block';
       btnEndBreak.style.display   = onBreak ? 'inline-block' : 'none';
       breakHint.textContent = onBreak ? 'On break… tap End Break when you return.' : '';
-    } else {
-      breakHint.textContent = '';
-    }
+    } else breakHint.textContent = '';
 
     if(open){
       statusEl.textContent='On the clock';
@@ -337,7 +325,6 @@
     }
     renderTotals(); renderHistory();
   }
-
   function updateTimer(startISO){
     const diff=Math.max(0, ((Date.now()-new Date(startISO))/1000)|0);
     const h=String((diff/3600|0)).padStart(2,'0');
@@ -345,7 +332,6 @@
     const s=String(diff%60).padStart(2,'0');
     timerEl.textContent=`${h}:${m}:${s}`;
   }
-
   function renderTotals(){
     const w0=startOfWeek(), m0=startOfMonth();
     const week=sessions.filter(s=>new Date(s.start)>=w0 && s.end).reduce((a,s)=>a+netMins(s),0);
@@ -353,7 +339,6 @@
     weekTotalEl.textContent=fmtHM(week);
     monthTotalEl.textContent=fmtHM(month);
   }
-
   function renderHistory(){
     if(!sessions.length){ historyEl.innerHTML='<div class="small">No sessions yet.</div>'; return; }
     const rows=sessions.slice().reverse().map(s=>{
@@ -377,16 +362,14 @@
     historyEl.querySelectorAll('.btn-delete').forEach(b=>b.addEventListener('click',onDelete));
     historyEl.querySelectorAll('.btn-edit').forEach(b=>b.addEventListener('click',onEdit));
   }
-
   function liveHistoryTick(){
     const container = historyEl.querySelector('.item.running');
-    const s = running();
-    if(!container || !s) return;
+    const s = running(); if(!container || !s) return;
     const small = container.querySelector('.small strong');
     if(small) small.textContent = fmtHM(netMins(s,true));
   }
 
-  // ---------- Actions (clock / breaks / delete) ----------
+  /* ---------- Actions (clock / breaks / delete) ---------- */
   toggleBtn.addEventListener('click', ()=>{
     const open=running();
     if(open){
@@ -406,14 +389,11 @@
     }
     refresh();
   });
-
   function onDelete(e){
     const id=e.target.closest('.item').dataset.id;
     sessions=sessions.filter(s=>s.id!==id);
     persist(); refresh();
   }
-
-  // Breaks (running)
   btnStartBreak.addEventListener('click', ()=>{
     const s = running(); if(!s || s.currentBreakStart) return;
     s.currentBreakStart = new Date().toISOString();
@@ -428,37 +408,28 @@
     persist(); refresh();
   });
 
-  // ---------- Add Shift ----------
+  /* ---------- Add Shift ---------- */
   const addShiftDlg = $('#addShiftDlg');
   const addStart = $('#addStart'), addEnd = $('#addEnd');
   const addBreakCount = $('#addBreakCount'), addBreakMinutes = $('#addBreakMinutes'), addNote = $('#addNote');
 
   $('#btnAddShift').addEventListener('click', ()=>{
-    // Prefill start = now rounded to 5 mins, leave end empty
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - (now.getMinutes()%5), 0, 0);
+    const now = new Date(); now.setMinutes(now.getMinutes() - (now.getMinutes()%5), 0, 0);
     addStart.value = toLocalDTValue(now.toISOString());
-    addEnd.value = '';
-    addBreakCount.value = 0;
-    addBreakMinutes.value = 0;
-    addNote.value = '';
+    addEnd.value = ''; addBreakCount.value = 0; addBreakMinutes.value = 0; addNote.value = '';
     addShiftDlg.showModal();
   });
   $('#cancelAddShift').addEventListener('click', ()=>addShiftDlg.close());
-
   $('#saveAddShift').addEventListener('click', ()=>{
     if(!addStart.value){ alert('Please enter a start time.'); return; }
     const startISO = fromLocalDTValue(addStart.value);
     let endISO = addEnd.value ? fromLocalDTValue(addEnd.value) : null;
-
     const now = new Date();
-    if(new Date(startISO) > now){ alert('Start time cannot be in the future.'); return; }
+    if(new Date(startISO) > now) return alert('Start time cannot be in the future.');
     if(endISO){
-      if(new Date(endISO) < new Date(startISO)){ alert('End cannot be before Start.'); return; }
-      if(new Date(endISO) > now){ alert('End time cannot be in the future.'); return; }
+      if(new Date(endISO) < new Date(startISO)) return alert('End cannot be before Start.');
+      if(new Date(endISO) > now) return alert('End time cannot be in the future.');
     }
-
-    // If there's a running session already and user tries to add another running one, close the existing one now.
     const open = running();
     if(!endISO && open){
       if(!confirm('You already have a running session. End it now and create this new running shift?')) return;
@@ -469,7 +440,6 @@
       }
       open.end = new Date().toISOString();
     }
-
     const s = {
       id: crypto.randomUUID(),
       start: startISO,
@@ -479,16 +449,12 @@
       note: addNote.value || '',
       currentBreakStart: null
     };
-    sessions.push(s);
-    persist();
-    addShiftDlg.close();
-
-    // If the new shift is running and crosses midnight(s), normalize
-    if(!s.end){ normalizeMidnightSplits(); }
+    sessions.push(s); persist(); addShiftDlg.close();
+    if(!s.end) normalizeMidnightSplits();
     refresh();
   });
 
-  // ---------- Breaks dialog after clock-out ----------
+  /* ---------- Breaks dialog after clock-out ---------- */
   const breaksDlg = document.getElementById('breaksDlg'), breaksInfo = document.getElementById('breaksInfo');
   const breakCountDlg = document.getElementById('breakCount'), breakMinutesDlg = document.getElementById('breakMinutes'), breakNoteDlg = document.getElementById('breakNote');
   document.getElementById('skipBreaks').addEventListener('click', ()=>breaksDlg.close());
@@ -510,7 +476,7 @@
     breaksDlg.showModal();
   }
 
-  // ---------- Edit dialog ----------
+  /* ---------- Edit dialog ---------- */
   const editDlg=$('#editDlg'), editWhen=$('#editWhen'),
         editStart=$('#editStart'), editEnd=$('#editEnd'),
         editBreakCount=$('#editBreakCount'), editBreakMinutes=$('#editBreakMinutes'),
@@ -529,7 +495,6 @@
     s.note=editNote.value||"";
     persist(); normalizeMidnightSplits(); editDlg.close(); refresh();
   });
-
   function onEdit(e){
     const id=e.target.closest('.item').dataset.id;
     const s=sessions.find(x=>x.id===id); if(!s) return;
@@ -544,7 +509,7 @@
     editDlg.showModal();
   }
 
-  // ---------- “Leaving while clocked in?” reminder ----------
+  /* ---------- “Leaving while clocked in?” reminder ---------- */
   window.addEventListener('beforeunload', (e)=>{
     const s=running();
     if(s){
@@ -554,7 +519,7 @@
     }
   });
 
-  // ---------- Report / Export (weekly breakdown etc.) ----------
+  /* ---------- Reports (weekly breakdown / CSV / print) ---------- */
   const reportDlg=$('#reportDlg'); const repFrom=$('#repFrom'), repTo=$('#repTo'), repGroup=$('#repGroup');
   const repSummary=$('#repSummary'), repChart=$('#repChart'), weeklyTable=$('#weeklyTable');
   const ctx=repChart.getContext('2d');
@@ -674,22 +639,70 @@
     const labels=[...map.keys()].sort(); const values=labels.map(k=>map.get(k));
     return {labels,values};
   }
+  function drawReport(){
+    const {from,to}=rangeDates();
+    const list=sessions.filter(s=>s.end && new Date(s.start)>=from && new Date(s.start)<=to);
+    const totalM=list.reduce((a,s)=>a+netMins(s),0);
+    repSummary.textContent=`${list.length} session(s) • Total ${fmtHM(totalM)} • ${from.toLocaleDateString()} → ${to.toLocaleDateString()}`;
+
+    const c=document.getElementById('repChart'); const ctx=c.getContext('2d');
+    ctx.clearRect(0,0,c.width,c.height);
+    const grp=repGroup.value;
+    if(grp==='none'){ ctx.fillStyle='#a9b0bb'; ctx.font='14px system-ui'; ctx.fillText('Chart disabled.', 10, 24); }
+    else {
+      let labels=[], values=[], title='';
+      if(grp==='week'){ ({labels,values}=groupByWeek(list)); title='Weekly total'; }
+      if(grp==='month'){ ({labels,values}=groupByMonth(list)); title='Monthly total'; }
+      if(values.length){
+        const W=c.width, H=c.height, pad=30, bw=Math.max(12,(W-2*pad)/values.length - 8);
+        const max=Math.max(...values,60);
+        ctx.fillStyle='#e6e9ef'; ctx.font='14px system-ui'; ctx.fillText(title,10,18);
+        ctx.strokeStyle='#2b2f3c'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+        const scale=(H-2*pad)/max;
+        values.forEach((v,i)=>{
+          const x=pad + i*((W-2*pad)/values.length) + 4;
+          const h=v*scale; const y=H-pad-h;
+          ctx.fillStyle='#0a84ff'; ctx.fillRect(x,y,bw,h);
+        });
+        ctx.fillStyle='#a9b0bb'; ctx.font='10px system-ui';
+        labels.forEach((lb,i)=>{ const x=pad + i*((W-2*pad)/values.length) + 4; ctx.fillText(lb, x, H-10); });
+      } else {
+        ctx.fillStyle='#a9b0bb'; ctx.font='14px system-ui'; ctx.fillText('No grouped data for this range.', 10, 24);
+      }
+    }
+    drawWeeklyTable();
+  }
+  function drawWeeklyTable(){
+    const {weeks}=weeklyBreakdown();
+    let html='';
+    for(const w of weeks){
+      html += `<div class="weekHeader">Week ${w.label} (${w.mon} → ${w.sun})</div>`;
+      html += `<table><thead><tr><th>Day</th><th>Date</th><th>Net minutes</th><th>HH:MM</th></tr></thead><tbody>`;
+      for(const d of w.days){
+        html += `<tr><td>${d.dayName}</td><td>${d.date}</td><td>${d.mins}</td><td>${fmtHHMM(d.mins)}</td></tr>`;
+      }
+      const weekTotal = w.days.reduce((a,b)=>a+b.mins,0);
+      html += `<tr><th colspan="2">Week total</th><th>${weekTotal}</th><th>${fmtHHMM(weekTotal)}</th></tr>`;
+      html += `</tbody></table>`;
+    }
+    weeklyTable.innerHTML = html || '<div class="small">No data in this range.</div>';
+  }
   function downloadBlob(text, filename, mime){
     const blob=new Blob([text],{type:mime}); const url=URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   }
 
-  // ---------- Clear all ----------
+  /* ---------- Clear all ---------- */
   btnClear.addEventListener('click', ()=>{
     if(confirm('Delete all sessions? This cannot be undone.')){ sessions=[]; persist(); refresh(); }
   });
 
-  // ---------- Init ----------
+  /* ---------- Init ---------- */
   normalizeMidnightSplits();
   refresh();
 
-  // ---------- PWA SW ----------
+  /* ---------- PWA SW ---------- */
   if('serviceWorker' in navigator){
     window.addEventListener('load', ()=> navigator.serviceWorker.register('./sw.js'));
   }
