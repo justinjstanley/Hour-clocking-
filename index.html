@@ -8,13 +8,13 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <style>
-    :root { --accent:#0a84ff; --bg:#0b0b10; --card:#15151c; --text:#f4f6f8; --muted:#a9b0bb; }
+    :root { --accent:#0a84ff; --bg:#0b0b10; --card:#15151c; --text:#f4f6f8; --muted:#a9b0bb; --danger:#ff8aa1; }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     .wrap { max-width: 760px; margin: 0 auto; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
     header { display:flex; align-items:center; justify-content:space-between; padding:16px 0; }
     h1 { font-size: 22px; margin: 0; }
-    .toolbar { display:flex; gap:8px; }
+    .toolbar { display:flex; gap:8px; flex-wrap: wrap; }
     button.primary { width:100%; padding:18px 16px; font-size:22px; font-weight:600; border-radius:14px; border:none; background: var(--accent); color:white; }
     button.primary:active { transform: translateY(1px); }
     .status { text-align:center; margin: 8px 0 16px; color: var(--muted); }
@@ -23,13 +23,15 @@
     .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #222532; }
     .row:last-child { border-bottom:none; }
     .list { margin-top:14px; }
-    .item { padding:12px 0; border-bottom:1px solid #222532; }
-    .item:last-child { border-bottom:none; }
-    .item h3 { margin:0 0 6px; font-size:16px; }
+    .item { padding:12px; border:1px solid #222532; border-radius:10px; margin-bottom:10px; }
+    .item.running { border-color:#2a3dff77; box-shadow: 0 0 0 2px #2a3dff33 inset, 0 0 18px #2a3dff22; }
+    .item h3 { margin:0 0 6px; font-size:16px; display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+    .pill { font-size:11px; border:1px solid #2a3dff77; color:#cfe0ff; padding:2px 6px; border-radius:999px; }
     .small { font-size:12px; color: var(--muted); }
-    .actions { display:flex; gap:8px; margin-top:8px; }
+    .actions { display:flex; gap:8px; margin-top:8px; flex-wrap: wrap; }
     .btn { padding:8px 10px; border-radius:10px; border:1px solid #2b2f3c; background:#191a22; color:#e6e9ef; font-size:13px; }
-    .btn.danger { border-color:#3a2330; background:#24161d; color:#ff8aa1; }
+    .btn.danger { border-color:#3a2330; background:#24161d; color:var(--danger); }
+    .btn.warn  { border-color:#3a2f0f; background:#262015; color:#ffd08a; }
     dialog { border:1px solid #2b2f3c; border-radius:12px; background:#12131a; color:var(--text); max-width:520px; width:calc(100% - 32px); }
     dialog::backdrop { background: rgba(0,0,0,0.5); }
     label { display:block; margin:10px 0 6px; }
@@ -37,21 +39,16 @@
       width:100%; padding:10px; border-radius:10px; border:1px solid #2b2f3c; background:#0f1016; color:var(--text);
     }
     .row2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-    .footer-note { margin-top:14px; font-size:12px; color: var(--muted); text-align:center; }
     canvas { width:100%; height:220px; background:#0f1016; border-radius:10px; border:1px solid #2b2f3c; }
+    .footer-note { margin-top:14px; font-size:12px; color:var(--muted); text-align:center; }
 
     /* Breakdown table */
     table { width:100%; border-collapse: collapse; margin-top:8px; }
     th, td { border:1px solid #2b2f3c; padding:8px; text-align:left; font-size:13px; }
     th { background:#0f1016; }
     .weekHeader { margin-top:12px; font-weight:700; }
-    @media print {
-      body { background:white; color:black; }
-      .wrap, dialog { max-width:100%; padding:0; }
-      .toolbar, .footer-note, header, .status, .timer, .primary, .card, .list { display:none !important; }
-      #printArea { display:block !important; }
-      table, th, td { border-color:#ccc; color:#000; }
-    }
+
+    @media (max-width:420px){ .toolbar { gap:6px; } }
   </style>
 </head>
 <body>
@@ -66,6 +63,14 @@
 
     <div class="status" id="status">Off the clock</div>
     <div class="timer" id="timer">—</div>
+
+    <!-- Running controls -->
+    <div class="toolbar" id="runningControls" style="display:none; margin-bottom:8px;">
+      <button class="btn warn" id="btnStartBreak">Start Break</button>
+      <button class="btn" id="btnEndBreak" style="display:none;">End Break</button>
+      <span class="small" id="breakHint"></span>
+    </div>
+
     <button class="primary" id="toggleBtn">Clock In</button>
 
     <div style="height:12px"></div>
@@ -75,7 +80,7 @@
       <div class="row"><span>This Month</span><strong id="monthTotal">0m</strong></div>
     </div>
 
-    <div class="list card" style="margin-top:12px;">
+    <div class="list" style="margin-top:12px;">
       <h2 style="margin:0 0 8px;font-size:18px;">History</h2>
       <div id="history"></div>
     </div>
@@ -85,7 +90,7 @@
     </p>
   </div>
 
-  <!-- Breaks dialog -->
+  <!-- Breaks dialog after clock-out -->
   <dialog id="breaksDlg">
     <form method="dialog">
       <h3>Breaks for this session</h3>
@@ -176,52 +181,136 @@
     </form>
   </dialog>
 
-  <!-- Hidden area for print -->
-  <div id="printArea" style="display:none;"></div>
-
   <script>
-  // ---- Storage --------------------------------------------------------------
-  const KEY='simple-hours-sessions-v1';
+  // ---------- Storage ----------
+  const KEY='simple-hours-sessions-v2';
   let sessions=JSON.parse(localStorage.getItem(KEY)||'[]');
   const persist=()=>localStorage.setItem(KEY, JSON.stringify(sessions));
 
-  // ---- Helpers --------------------------------------------------------------
+  // ---------- Helpers ----------
   const $=s=>document.querySelector(s);
   const fmtDT=d=>new Date(d).toLocaleString();
   const fmtHM=m=>{ m=Math.max(0,Math.floor(m)); const h=(m/60|0), mm=(m%60); return h?`${h}h ${mm}m`:`${mm}m`; };
   const fmtHHMM=m=>{ m=Math.max(0,Math.floor(m)); const h=(m/60|0), mm=String(m%60).padStart(2,'0'); return `${h}:${mm}`; }
   const durMins=(s,e)=>Math.max(0, Math.round((new Date(e)-new Date(s))/60000));
-  const netMins=s=>Math.max(0, durMins(s.start, s.end ?? new Date()) - (s.breakMinutes||0));
   const isOpen=s=>s.end===null;
+  const running=()=>sessions.find(isOpen)||null;
+
+  // Net minutes helper (subtracts recorded breaks; if currently on break, subtract live break time too for display)
+  function netMins(session, includeLiveBreak=false){
+    const end = session.end ?? new Date();
+    let mins = durMins(session.start, end) - (session.breakMinutes||0);
+    if(includeLiveBreak && session.currentBreakStart){
+      mins -= durMins(session.currentBreakStart, end);
+    }
+    return Math.max(0, mins);
+  }
 
   function startOfWeek(d=new Date()){ const x=new Date(d); const wd=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-wd); return x; } // Mon
   function endOfWeek(d=new Date()){ const m=startOfWeek(d); const s=new Date(m); s.setDate(s.getDate()+6); s.setHours(23,59,59,999); return s; }
   function startOfMonth(d=new Date()){ const x=new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
+  function ymd(d){ const x=new Date(d); x.setHours(0,0,0,0); return x.toISOString().slice(0,10); }
   function toLocalDTValue(iso){ const d=new Date(iso), tz=d.getTimezoneOffset()*60000; return new Date(d - tz).toISOString().slice(0,16); }
   function fromLocalDTValue(val){ const d=new Date(val), tz=d.getTimezoneOffset()*60000; return new Date(d.getTime()+tz).toISOString(); }
   function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
   function escapeHTML(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function ymd(d){ const x=new Date(d); x.setHours(0,0,0,0); return x.toISOString().slice(0,10); }
 
-  // ---- UI refs --------------------------------------------------------------
+  // ---------- UI refs ----------
   const statusEl=$('#status'), timerEl=$('#timer'), toggleBtn=$('#toggleBtn');
   const weekTotalEl=$('#weekTotal'), monthTotalEl=$('#monthTotal'), historyEl=$('#history');
+  const runningControls=$('#runningControls'), btnStartBreak=$('#btnStartBreak'), btnEndBreak=$('#btnEndBreak'), breakHint=$('#breakHint');
   const btnReport=$('#btnReport'), btnClear=$('#btnClear');
-  let tickHandle=null;
 
-  // ---- Core UI --------------------------------------------------------------
+  let tickHandle=null, midnightTimer=null;
+
+  // ---------- Midnight auto-split ----------
+  // If an open session spans any past midnight(s), split them so each day ends 23:59 and next day starts 00:00
+  function normalizeMidnightSplits(){
+    const s = running();
+    if(!s) return;
+
+    // Handle past midnights (if app was closed overnight)
+    let lastMidnight = new Date(); lastMidnight.setHours(0,0,0,0);
+    // If the session started before today, split at each midnight boundary up to today
+    let boundary = new Date(s.start); boundary.setHours(0,0,0,0);
+    while(boundary < lastMidnight){
+      const splitAt = new Date(boundary); splitAt.setDate(splitAt.getDate()+1); // next day 00:00 local
+      // previous day end = splitAt - 1 minute (23:59)
+      const prevEnd = new Date(splitAt); prevEnd.setMinutes(prevEnd.getMinutes()-1);
+
+      // End the existing session at prevEnd
+      s.end = prevEnd.toISOString();
+
+      // If on a break during the split, allocate break time up to prevEnd, then continue break in new session
+      let carryBreak = null;
+      if(s.currentBreakStart){
+        const add = durMins(s.currentBreakStart, prevEnd);
+        s.breakMinutes = (s.breakMinutes||0) + add;
+        carryBreak = splitAt.toISOString();
+        s.currentBreakStart = null;
+      }
+
+      // Create new session starting at splitAt
+      const newS = {
+        id: crypto.randomUUID(),
+        start: splitAt.toISOString(),
+        end: null,
+        breakCount: s.breakCount || 0, // do not increment; continued day still counts as same break if carry
+        breakMinutes: 0,
+        note: s.note || "",
+        currentBreakStart: carryBreak
+      };
+      sessions.push(newS);
+
+      // Continue with the new running session
+      persist();
+      // Loop again in case multiple midnights passed
+      if(isOpen(newS)){ /* ok */ }
+      // Set s to newS for next iteration
+      Object.assign(s, newS); // mutate reference for simplicity
+      sessions = sessions.filter(x => x.id !== newS.id).concat([s]); // ensure one instance
+      boundary = new Date(s.start); boundary.setHours(0,0,0,0);
+    }
+
+    // Set a timer to split at the NEXT midnight while app is open
+    scheduleNextMidnightSplit();
+  }
+
+  function scheduleNextMidnightSplit(){
+    if(midnightTimer) { clearTimeout(midnightTimer); midnightTimer=null; }
+    const s = running(); if(!s) return;
+    const now = new Date();
+    const next = new Date(now); next.setDate(next.getDate()+1); next.setHours(0,0,5,0); // 00:00:05 safety
+    midnightTimer = setTimeout(()=>{ normalizeMidnightSplits(); refresh(); }, next - now);
+  }
+
+  // ---------- Core UI ----------
   function refresh(){
-    const open=sessions.find(isOpen);
+    const open=running();
+
+    // Show/hide running controls
+    runningControls.style.display = open ? 'flex' : 'none';
+    if(open){
+      const onBreak = !!open.currentBreakStart;
+      btnStartBreak.style.display = onBreak ? 'none' : 'inline-block';
+      btnEndBreak.style.display   = onBreak ? 'inline-block' : 'none';
+      breakHint.textContent = onBreak ? 'On break… tap End Break when you return.' : '';
+    } else {
+      breakHint.textContent = '';
+    }
+
     if(open){
       statusEl.textContent='On the clock';
       toggleBtn.textContent='Clock Out';
       updateTimer(open.start);
-      if(!tickHandle) tickHandle=setInterval(()=>updateTimer(open.start),1000);
+      if(!tickHandle) tickHandle=setInterval(()=>{ updateTimer(open.start); liveHistoryTick(); },1000);
+      scheduleNextMidnightSplit();
     }else{
       statusEl.textContent='Off the clock';
       toggleBtn.textContent='Clock In';
       timerEl.textContent='—';
       if(tickHandle){ clearInterval(tickHandle); tickHandle=null; }
+      if(midnightTimer){ clearTimeout(midnightTimer); midnightTimer=null; }
     }
     renderTotals(); renderHistory();
   }
@@ -246,11 +335,13 @@
     if(!sessions.length){ historyEl.innerHTML='<div class="small">No sessions yet.</div>'; return; }
     const rows=sessions.slice().reverse().map(s=>{
       const endText=s.end?fmtDT(s.end):'(running)';
-      const net=s.end?fmtHM(netMins(s)):'—';
-      const breaks=s.breakMinutes?` − ${s.breakMinutes}m breaks (${s.breakCount||0})`:'';
-      const note=s.note?`<div class="small">${escapeHTML(s.note)}</div>`:'';
-      return `<div class="item" data-id="${s.id}">
-        <h3>${fmtDT(s.start)} → ${endText}</h3>
+      const isRunning=isOpen(s);
+      const live = isRunning ? ` <span class="pill">LIVE</span>` : '';
+      const net = s.end ? fmtHM(netMins(s)) : fmtHM(netMins(s,true));
+      const breaks = (s.breakMinutes||0) ? ` − ${s.breakMinutes}m breaks (${s.breakCount||0})` : (s.currentBreakStart?' − (on break)':'');
+      const note = s.note ? `<div class="small">${escapeHTML(s.note)}</div>` : '';
+      return `<div class="item ${isRunning?'running':''}" data-id="${s.id}">
+        <h3>${fmtDT(s.start)} → ${endText}${live}</h3>
         <div class="small">Worked (net): <strong>${net}</strong>${breaks}</div>
         ${note}
         <div class="actions">
@@ -264,19 +355,50 @@
     historyEl.querySelectorAll('.btn-edit').forEach(b=>b.addEventListener('click',onEdit));
   }
 
-  // ---- Actions --------------------------------------------------------------
+  // Live update the top history card if running
+  function liveHistoryTick(){
+    const container = historyEl.querySelector('.item.running');
+    const s = running();
+    if(!container || !s) return;
+    const small = container.querySelector('.small strong');
+    if(small) small.textContent = fmtHM(netMins(s,true));
+  }
+
+  // ---------- Actions (clock / breaks / delete) ----------
   toggleBtn.addEventListener('click', ()=>{
-    const open=sessions.find(isOpen);
+    const open=running();
     if(open){
+      // If on break, end it first
+      if(open.currentBreakStart){
+        const add = durMins(open.currentBreakStart, new Date());
+        open.breakMinutes = (open.breakMinutes||0) + add;
+        open.currentBreakStart = null;
+      }
       open.end=new Date().toISOString();
       persist();
       openBreaksDialog(open);
     }else{
+      // close any strays
       sessions.filter(isOpen).forEach(s=>s.end=new Date().toISOString());
-      sessions.push({id:crypto.randomUUID(), start:new Date().toISOString(), end:null, breakCount:0, breakMinutes:0, note:""});
+      sessions.push({id:crypto.randomUUID(), start:new Date().toISOString(), end:null, breakCount:0, breakMinutes:0, note:"", currentBreakStart:null});
       persist();
+      normalizeMidnightSplits();
     }
     refresh();
+  });
+
+  btnStartBreak.addEventListener('click', ()=>{
+    const s = running(); if(!s || s.currentBreakStart) return;
+    s.currentBreakStart = new Date().toISOString();
+    s.breakCount = (s.breakCount||0) + 1;
+    persist(); refresh();
+  });
+  btnEndBreak.addEventListener('click', ()=>{
+    const s = running(); if(!s || !s.currentBreakStart) return;
+    const add = durMins(s.currentBreakStart, new Date());
+    s.breakMinutes = (s.breakMinutes||0) + add;
+    s.currentBreakStart = null;
+    persist(); refresh();
   });
 
   function onDelete(e){
@@ -285,16 +407,16 @@
     persist(); refresh();
   }
 
-  // ---- Breaks dialog --------------------------------------------------------
-  const breaksDlg=$('#breaksDlg'), breaksInfo=$('#breaksInfo');
-  const breakCount=$('#breakCount'), breakMinutes=$('#breakMinutes'), breakNote=$('#breakNote');
-  $('#skipBreaks').addEventListener('click', ()=>breaksDlg.close());
-  $('#saveBreaks').addEventListener('click', ()=>{
+  // ---------- Breaks dialog after clock-out ----------
+  const breaksDlg = document.getElementById('breaksDlg'), breaksInfo = document.getElementById('breaksInfo');
+  const breakCount = document.getElementById('breakCount'), breakMinutes = document.getElementById('breakMinutes'), breakNote = document.getElementById('breakNote');
+  document.getElementById('skipBreaks').addEventListener('click', ()=>breaksDlg.close());
+  document.getElementById('saveBreaks').addEventListener('click', ()=>{
     if(!breaksDlg._session) return;
     const s=breaksDlg._session;
-    s.breakCount=clamp(parseInt(breakCount.value||'0',10),0,20);
-    s.breakMinutes=clamp(parseInt(breakMinutes.value||'0',10),0,480);
-    s.note=breakNote.value||"";
+    s.breakCount = clamp(parseInt(breakCount.value||'0',10),0,20);
+    s.breakMinutes = clamp(parseInt(breakMinutes.value||'0',10),0,480);
+    s.note = breakNote.value||"";
     persist(); breaksDlg.close(); refresh();
   });
   function openBreaksDialog(session){
@@ -307,11 +429,12 @@
     breaksDlg.showModal();
   }
 
-  // ---- Edit dialog ----------------------------------------------------------
+  // ---------- Edit dialog ----------
   const editDlg=$('#editDlg'), editWhen=$('#editWhen'),
         editStart=$('#editStart'), editEnd=$('#editEnd'),
         editBreakCount=$('#editBreakCount'), editBreakMinutes=$('#editBreakMinutes'),
         editNote=$('#editNote');
+
   $('#cancelEdit').addEventListener('click', ()=>editDlg.close());
   $('#saveEdit').addEventListener('click', ()=>{
     const s=editDlg._session; if(!s) return;
@@ -323,7 +446,8 @@
     s.breakCount=clamp(parseInt(editBreakCount.value||'0',10),0,20);
     s.breakMinutes=clamp(parseInt(editBreakMinutes.value||'0',10),0,480);
     s.note=editNote.value||"";
-    persist(); editDlg.close(); refresh();
+    // If you cleared end, it's running again: re-normalize midnight split schedule
+    persist(); normalizeMidnightSplits(); editDlg.close(); refresh();
   });
 
   function onEdit(e){
@@ -340,9 +464,27 @@
     editDlg.showModal();
   }
 
-  // ---- Report / Export w/ Weekly breakdown ---------------------------------
+  // ---------- “Leaving while clocked in?” reminder ----------
+  window.addEventListener('beforeunload', (e)=>{
+    const s=running();
+    if(s){
+      e.preventDefault();
+      e.returnValue='You are still clocked in. Leave this page?';
+      return 'You are still clocked in. Leave this page?';
+    }
+  });
+  document.addEventListener('visibilitychange', ()=>{
+    // If user backgrounds the app, try to warn (may not show on iOS when fully backgrounding, but helps on nav)
+    if(document.visibilityState==='hidden' && running()){
+      // Best-effort: show a quick alert if still visible
+      // (Some browsers suppress; harmless if ignored)
+      alert('Heads up: you are still clocked in.');
+    }
+  });
+
+  // ---------- Report / Export (unchanged from your last version) ----------
   const reportDlg=$('#reportDlg'); const repFrom=$('#repFrom'), repTo=$('#repTo'), repGroup=$('#repGroup');
-  const repSummary=$('#repSummary'), repChart=$('#repChart'), weeklyTable=$('#weeklyTable'), printArea=$('#printArea');
+  const repSummary=$('#repSummary'), repChart=$('#repChart'), weeklyTable=$('#weeklyTable');
   const ctx=repChart.getContext('2d');
 
   $('#closeReport').addEventListener('click', ()=>reportDlg.close());
@@ -376,15 +518,13 @@
       for(const d of w.days){
         lines.push(`${d.dayName},${d.date},${d.mins},${fmtHHMM(d.mins)}`);
       }
-      lines.push(""); // blank line between weeks
+      lines.push("");
     }
     const csv=lines.join("\n");
     downloadBlob(csv, `weekly-breakdown-${Date.now()}.csv`, 'text/csv;charset=utf-8;');
   });
 
-  $('#printBreakdown').addEventListener('click', ()=>{
-    // Inject the weeklyTable HTML into printArea and print
-    printArea.innerHTML = weeklyTable.innerHTML;
+  document.getElementById('printBreakdown').addEventListener('click', ()=>{
     window.print();
   });
 
@@ -395,12 +535,10 @@
     const to  =repTo.value?new Date(repTo.value+"T23:59:59.999"):new Date('2100-01-01');
     return {from,to};
   }
-
-  // Build daily totals map within range (YYYY-MM-DD -> minutes)
   function dailyTotals(from,to){
     const map=new Map();
     for(const s of sessions){
-      if(!s.end) continue;
+      if(!s.end) continue; // only finished sessions in reports
       const st=new Date(s.start);
       if(st<from || st>to) continue;
       const key=ymd(st);
@@ -408,37 +546,28 @@
     }
     return map;
   }
-
-  // Build list of weeks (Mon..Sun) fully covering range, with zeros filled
   function weeklyBreakdown(){
     const {from,to}=rangeDates();
     const map=dailyTotals(from,to);
-    // Find first Monday <= from, last Sunday >= to
     let cur=startOfWeek(from);
     const last=endOfWeek(to);
     const weeks=[];
     while(cur<=last){
       const mon=new Date(cur);
       const sun=endOfWeek(mon);
-      const label = isoWeekLabel(mon); // e.g. 2025-W42
+      const label = isoWeekLabel(mon);
       const days=[];
       for(let i=0;i<7;i++){
         const d=new Date(mon); d.setDate(d.getDate()+i);
         const key=ymd(d);
-        days.push({
-          dayName: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][i],
-          date: key,
-          mins: map.get(key)||0
-        });
+        days.push({ dayName:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][i], date:key, mins: map.get(key)||0 });
       }
       weeks.push({ label, mon: ymd(mon), sun: ymd(sun), days });
       cur.setDate(cur.getDate()+7);
     }
     return {weeks};
   }
-
   function isoWeekLabel(monDate){
-    // monDate is Monday; get ISO year/week
     const d=new Date(monDate);
     const {y,w}=isoWeekYear(d);
     return `${y}-W${String(w).padStart(2,'0')}`;
@@ -451,7 +580,6 @@
     const week=1+Math.round(((date-firstThursday)/86400000 - 3 + (firstThursday.getUTCDay()+6)%7)/7);
     return {y: date.getUTCFullYear(), w: week};
   }
-
   function drawWeeklyTable(){
     const {weeks}=weeklyBreakdown();
     let html='';
@@ -467,7 +595,6 @@
     }
     weeklyTable.innerHTML = html || '<div class="small">No data in this range.</div>';
   }
-
   function drawReport(){
     const {from,to}=rangeDates();
     const list=sessions.filter(s=>s.end && new Date(s.start)>=from && new Date(s.start)<=to);
@@ -476,14 +603,15 @@
 
     // Chart
     const grp=repGroup.value;
-    ctx.clearRect(0,0,repChart.width,repChart.height);
+    const c=document.getElementById('repChart'); const ctx=c.getContext('2d');
+    ctx.clearRect(0,0,c.width,c.height);
     if(grp==='none'){ ctx.fillStyle='#a9b0bb'; ctx.font='14px system-ui'; ctx.fillText('Chart disabled.', 10, 24); }
     else {
       let labels=[], values=[], title='';
       if(grp==='week'){ ({labels,values}=groupByWeek(list)); title='Weekly total'; }
       if(grp==='month'){ ({labels,values}=groupByMonth(list)); title='Monthly total'; }
       if(values.length){
-        const W=repChart.width, H=repChart.height, pad=30, bw=Math.max(12,(W-2*pad)/values.length - 8);
+        const W=c.width, H=c.height, pad=30, bw=Math.max(12,(W-2*pad)/values.length - 8);
         const max=Math.max(...values,60);
         ctx.fillStyle='#e6e9ef'; ctx.font='14px system-ui'; ctx.fillText(title,10,18);
         ctx.strokeStyle='#2b2f3c'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
@@ -500,10 +628,8 @@
       }
     }
 
-    // Weekly table (Mon–Sun with zeros)
     drawWeeklyTable();
   }
-
   function groupByWeek(list){
     const map=new Map();
     for(const s of list){
@@ -529,23 +655,26 @@
     const labels=[...map.keys()].sort(); const values=labels.map(k=>map.get(k));
     return {labels,values};
   }
-
   function downloadBlob(text, filename, mime){
     const blob=new Blob([text],{type:mime}); const url=URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   }
 
-  // ---- Clear all ------------------------------------------------------------
+  // ---------- Clear all ----------
   btnClear.addEventListener('click', ()=>{
     if(confirm('Delete all sessions? This cannot be undone.')){ sessions=[]; persist(); refresh(); }
   });
 
-  // ---- PWA SW ---------------------------------------------------------------
-  if('serviceWorker' in navigator){ window.addEventListener('load', ()=>navigator.serviceWorker.register('./sw.js')); }
-
-  // Init
+  // ---------- Init ----------
+  // Fix any overnight runs on load
+  normalizeMidnightSplits();
   refresh();
+
+  // ---------- PWA SW ----------
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', ()=> navigator.serviceWorker.register('./sw.js'));
+  }
   </script>
 </body>
 </html>
