@@ -42,7 +42,7 @@
     canvas { width:100%; height:220px; background:#0f1016; border-radius:10px; border:1px solid #2b2f3c; }
     .footer-note { margin-top:14px; font-size:12px; color:var(--muted); text-align:center; }
 
-    /* Breakdown table */
+    /* Breakdown table (reports) */
     table { width:100%; border-collapse: collapse; margin-top:8px; }
     th, td { border:1px solid #2b2f3c; padding:8px; text-align:left; font-size:13px; }
     th { background:#0f1016; }
@@ -56,6 +56,7 @@
     <header>
       <h1>Simple Hours</h1>
       <div class="toolbar">
+        <button class="btn" id="btnAddShift">Add Shift</button>
         <button class="btn" id="btnReport">Report / Export</button>
         <button class="btn" id="btnClear">Clear All</button>
       </div>
@@ -89,6 +90,37 @@
       Install: Safari → <em>Share ▸ Add to Home Screen</em>. Works offline. Data stays on-device.
     </p>
   </div>
+
+  <!-- Add Shift dialog -->
+  <dialog id="addShiftDlg">
+    <form method="dialog">
+      <h3>Add Shift</h3>
+      <label>Start time <span class="small">(required)</span></label>
+      <input type="datetime-local" id="addStart" required>
+
+      <label>End time <span class="small">(optional — leave blank for a running shift)</span></label>
+      <input type="datetime-local" id="addEnd">
+
+      <div class="row2">
+        <div>
+          <label>Breaks (count)</label>
+          <input type="number" id="addBreakCount" min="0" max="20" step="1" value="0">
+        </div>
+        <div>
+          <label>Break minutes</label>
+          <input type="number" id="addBreakMinutes" min="0" max="480" step="1" value="0">
+        </div>
+      </div>
+
+      <label>Note</label>
+      <input type="text" id="addNote" placeholder="optional">
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="btn" id="cancelAddShift">Cancel</button>
+        <button class="btn" id="saveAddShift">Save Shift</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- Breaks dialog after clock-out -->
   <dialog id="breaksDlg">
@@ -183,7 +215,7 @@
 
   <script>
   // ---------- Storage ----------
-  const KEY='simple-hours-sessions-v2';
+  const KEY='simple-hours-sessions-v3';
   let sessions=JSON.parse(localStorage.getItem(KEY)||'[]');
   const persist=()=>localStorage.setItem(KEY, JSON.stringify(sessions));
 
@@ -196,7 +228,6 @@
   const isOpen=s=>s.end===null;
   const running=()=>sessions.find(isOpen)||null;
 
-  // Net minutes helper (subtracts recorded breaks; if currently on break, subtract live break time too for display)
   function netMins(session, includeLiveBreak=false){
     const end = session.end ?? new Date();
     let mins = durMins(session.start, end) - (session.breakMinutes||0);
@@ -206,7 +237,7 @@
     return Math.max(0, mins);
   }
 
-  function startOfWeek(d=new Date()){ const x=new Date(d); const wd=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-wd); return x; } // Mon
+  function startOfWeek(d=new Date()){ const x=new Date(d); const wd=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-wd); return x; }
   function endOfWeek(d=new Date()){ const m=startOfWeek(d); const s=new Date(m); s.setDate(s.getDate()+6); s.setHours(23,59,59,999); return s; }
   function startOfMonth(d=new Date()){ const x=new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
   function ymd(d){ const x=new Date(d); x.setHours(0,0,0,0); return x.toISOString().slice(0,10); }
@@ -219,29 +250,26 @@
   const statusEl=$('#status'), timerEl=$('#timer'), toggleBtn=$('#toggleBtn');
   const weekTotalEl=$('#weekTotal'), monthTotalEl=$('#monthTotal'), historyEl=$('#history');
   const runningControls=$('#runningControls'), btnStartBreak=$('#btnStartBreak'), btnEndBreak=$('#btnEndBreak'), breakHint=$('#breakHint');
-  const btnReport=$('#btnReport'), btnClear=$('#btnClear');
+  const btnReport=$('#btnReport'), btnClear=$('#btnClear'), btnAddShift=$('#btnAddShift');
 
   let tickHandle=null, midnightTimer=null;
 
   // ---------- Midnight auto-split ----------
-  // If an open session spans any past midnight(s), split them so each day ends 23:59 and next day starts 00:00
   function normalizeMidnightSplits(){
     const s = running();
     if(!s) return;
 
-    // Handle past midnights (if app was closed overnight)
+    // Handle past midnights (if app was closed)
     let lastMidnight = new Date(); lastMidnight.setHours(0,0,0,0);
-    // If the session started before today, split at each midnight boundary up to today
     let boundary = new Date(s.start); boundary.setHours(0,0,0,0);
     while(boundary < lastMidnight){
-      const splitAt = new Date(boundary); splitAt.setDate(splitAt.getDate()+1); // next day 00:00 local
-      // previous day end = splitAt - 1 minute (23:59)
+      const splitAt = new Date(boundary); splitAt.setDate(splitAt.getDate()+1);
       const prevEnd = new Date(splitAt); prevEnd.setMinutes(prevEnd.getMinutes()-1);
 
-      // End the existing session at prevEnd
+      // End current session at 23:59
       s.end = prevEnd.toISOString();
 
-      // If on a break during the split, allocate break time up to prevEnd, then continue break in new session
+      // Carry an ongoing break if needed
       let carryBreak = null;
       if(s.currentBreakStart){
         const add = durMins(s.currentBreakStart, prevEnd);
@@ -250,37 +278,32 @@
         s.currentBreakStart = null;
       }
 
-      // Create new session starting at splitAt
+      // Start a new running session at 00:00
       const newS = {
         id: crypto.randomUUID(),
         start: splitAt.toISOString(),
         end: null,
-        breakCount: s.breakCount || 0, // do not increment; continued day still counts as same break if carry
+        breakCount: s.breakCount || 0,
         breakMinutes: 0,
         note: s.note || "",
         currentBreakStart: carryBreak
       };
       sessions.push(newS);
-
-      // Continue with the new running session
       persist();
-      // Loop again in case multiple midnights passed
-      if(isOpen(newS)){ /* ok */ }
-      // Set s to newS for next iteration
-      Object.assign(s, newS); // mutate reference for simplicity
-      sessions = sessions.filter(x => x.id !== newS.id).concat([s]); // ensure one instance
+
+      // Continue loop with the new session
+      Object.assign(s, newS);
+      sessions = sessions.filter(x => x.id !== newS.id).concat([s]);
       boundary = new Date(s.start); boundary.setHours(0,0,0,0);
     }
 
-    // Set a timer to split at the NEXT midnight while app is open
     scheduleNextMidnightSplit();
   }
-
   function scheduleNextMidnightSplit(){
     if(midnightTimer) { clearTimeout(midnightTimer); midnightTimer=null; }
     const s = running(); if(!s) return;
     const now = new Date();
-    const next = new Date(now); next.setDate(next.getDate()+1); next.setHours(0,0,5,0); // 00:00:05 safety
+    const next = new Date(now); next.setDate(next.getDate()+1); next.setHours(0,0,5,0);
     midnightTimer = setTimeout(()=>{ normalizeMidnightSplits(); refresh(); }, next - now);
   }
 
@@ -288,7 +311,7 @@
   function refresh(){
     const open=running();
 
-    // Show/hide running controls
+    // Running controls
     runningControls.style.display = open ? 'flex' : 'none';
     if(open){
       const onBreak = !!open.currentBreakStart;
@@ -355,7 +378,6 @@
     historyEl.querySelectorAll('.btn-edit').forEach(b=>b.addEventListener('click',onEdit));
   }
 
-  // Live update the top history card if running
   function liveHistoryTick(){
     const container = historyEl.querySelector('.item.running');
     const s = running();
@@ -368,7 +390,6 @@
   toggleBtn.addEventListener('click', ()=>{
     const open=running();
     if(open){
-      // If on break, end it first
       if(open.currentBreakStart){
         const add = durMins(open.currentBreakStart, new Date());
         open.breakMinutes = (open.breakMinutes||0) + add;
@@ -378,7 +399,6 @@
       persist();
       openBreaksDialog(open);
     }else{
-      // close any strays
       sessions.filter(isOpen).forEach(s=>s.end=new Date().toISOString());
       sessions.push({id:crypto.randomUUID(), start:new Date().toISOString(), end:null, breakCount:0, breakMinutes:0, note:"", currentBreakStart:null});
       persist();
@@ -387,6 +407,13 @@
     refresh();
   });
 
+  function onDelete(e){
+    const id=e.target.closest('.item').dataset.id;
+    sessions=sessions.filter(s=>s.id!==id);
+    persist(); refresh();
+  }
+
+  // Breaks (running)
   btnStartBreak.addEventListener('click', ()=>{
     const s = running(); if(!s || s.currentBreakStart) return;
     s.currentBreakStart = new Date().toISOString();
@@ -401,30 +428,84 @@
     persist(); refresh();
   });
 
-  function onDelete(e){
-    const id=e.target.closest('.item').dataset.id;
-    sessions=sessions.filter(s=>s.id!==id);
-    persist(); refresh();
-  }
+  // ---------- Add Shift ----------
+  const addShiftDlg = $('#addShiftDlg');
+  const addStart = $('#addStart'), addEnd = $('#addEnd');
+  const addBreakCount = $('#addBreakCount'), addBreakMinutes = $('#addBreakMinutes'), addNote = $('#addNote');
+
+  $('#btnAddShift').addEventListener('click', ()=>{
+    // Prefill start = now rounded to 5 mins, leave end empty
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - (now.getMinutes()%5), 0, 0);
+    addStart.value = toLocalDTValue(now.toISOString());
+    addEnd.value = '';
+    addBreakCount.value = 0;
+    addBreakMinutes.value = 0;
+    addNote.value = '';
+    addShiftDlg.showModal();
+  });
+  $('#cancelAddShift').addEventListener('click', ()=>addShiftDlg.close());
+
+  $('#saveAddShift').addEventListener('click', ()=>{
+    if(!addStart.value){ alert('Please enter a start time.'); return; }
+    const startISO = fromLocalDTValue(addStart.value);
+    let endISO = addEnd.value ? fromLocalDTValue(addEnd.value) : null;
+
+    const now = new Date();
+    if(new Date(startISO) > now){ alert('Start time cannot be in the future.'); return; }
+    if(endISO){
+      if(new Date(endISO) < new Date(startISO)){ alert('End cannot be before Start.'); return; }
+      if(new Date(endISO) > now){ alert('End time cannot be in the future.'); return; }
+    }
+
+    // If there's a running session already and user tries to add another running one, close the existing one now.
+    const open = running();
+    if(!endISO && open){
+      if(!confirm('You already have a running session. End it now and create this new running shift?')) return;
+      if(open.currentBreakStart){
+        const add = durMins(open.currentBreakStart, new Date());
+        open.breakMinutes = (open.breakMinutes||0) + add;
+        open.currentBreakStart = null;
+      }
+      open.end = new Date().toISOString();
+    }
+
+    const s = {
+      id: crypto.randomUUID(),
+      start: startISO,
+      end: endISO,
+      breakCount: clamp(parseInt(addBreakCount.value||'0',10),0,20),
+      breakMinutes: clamp(parseInt(addBreakMinutes.value||'0',10),0,480),
+      note: addNote.value || '',
+      currentBreakStart: null
+    };
+    sessions.push(s);
+    persist();
+    addShiftDlg.close();
+
+    // If the new shift is running and crosses midnight(s), normalize
+    if(!s.end){ normalizeMidnightSplits(); }
+    refresh();
+  });
 
   // ---------- Breaks dialog after clock-out ----------
   const breaksDlg = document.getElementById('breaksDlg'), breaksInfo = document.getElementById('breaksInfo');
-  const breakCount = document.getElementById('breakCount'), breakMinutes = document.getElementById('breakMinutes'), breakNote = document.getElementById('breakNote');
+  const breakCountDlg = document.getElementById('breakCount'), breakMinutesDlg = document.getElementById('breakMinutes'), breakNoteDlg = document.getElementById('breakNote');
   document.getElementById('skipBreaks').addEventListener('click', ()=>breaksDlg.close());
   document.getElementById('saveBreaks').addEventListener('click', ()=>{
     if(!breaksDlg._session) return;
     const s=breaksDlg._session;
-    s.breakCount = clamp(parseInt(breakCount.value||'0',10),0,20);
-    s.breakMinutes = clamp(parseInt(breakMinutes.value||'0',10),0,480);
-    s.note = breakNote.value||"";
+    s.breakCount = clamp(parseInt(breakCountDlg.value||'0',10),0,20);
+    s.breakMinutes = clamp(parseInt(breakMinutesDlg.value||'0',10),0,480);
+    s.note = breakNoteDlg.value||"";
     persist(); breaksDlg.close(); refresh();
   });
   function openBreaksDialog(session){
     const raw=durMins(session.start, session.end);
     breaksInfo.textContent=`Raw: ${fmtHM(raw)} • Set total break minutes and optional note.`;
-    breakCount.value=session.breakCount||0;
-    breakMinutes.value=session.breakMinutes||0;
-    breakNote.value=session.note||'';
+    breakCountDlg.value=session.breakCount||0;
+    breakMinutesDlg.value=session.breakMinutes||0;
+    breakNoteDlg.value=session.note||'';
     breaksDlg._session=session;
     breaksDlg.showModal();
   }
@@ -446,7 +527,6 @@
     s.breakCount=clamp(parseInt(editBreakCount.value||'0',10),0,20);
     s.breakMinutes=clamp(parseInt(editBreakMinutes.value||'0',10),0,480);
     s.note=editNote.value||"";
-    // If you cleared end, it's running again: re-normalize midnight split schedule
     persist(); normalizeMidnightSplits(); editDlg.close(); refresh();
   });
 
@@ -473,16 +553,8 @@
       return 'You are still clocked in. Leave this page?';
     }
   });
-  document.addEventListener('visibilitychange', ()=>{
-    // If user backgrounds the app, try to warn (may not show on iOS when fully backgrounding, but helps on nav)
-    if(document.visibilityState==='hidden' && running()){
-      // Best-effort: show a quick alert if still visible
-      // (Some browsers suppress; harmless if ignored)
-      alert('Heads up: you are still clocked in.');
-    }
-  });
 
-  // ---------- Report / Export (unchanged from your last version) ----------
+  // ---------- Report / Export (weekly breakdown etc.) ----------
   const reportDlg=$('#reportDlg'); const repFrom=$('#repFrom'), repTo=$('#repTo'), repGroup=$('#repGroup');
   const repSummary=$('#repSummary'), repChart=$('#repChart'), weeklyTable=$('#weeklyTable');
   const ctx=repChart.getContext('2d');
@@ -523,10 +595,7 @@
     const csv=lines.join("\n");
     downloadBlob(csv, `weekly-breakdown-${Date.now()}.csv`, 'text/csv;charset=utf-8;');
   });
-
-  document.getElementById('printBreakdown').addEventListener('click', ()=>{
-    window.print();
-  });
+  document.getElementById('printBreakdown').addEventListener('click', ()=>{ window.print(); });
 
   function toDateInput(d){ const x=new Date(d); x.setHours(0,0,0,0); return x.toISOString().slice(0,10); }
   function setRange(from,to){ repFrom.value=toDateInput(from); repTo.value=toDateInput(to); }
@@ -538,7 +607,7 @@
   function dailyTotals(from,to){
     const map=new Map();
     for(const s of sessions){
-      if(!s.end) continue; // only finished sessions in reports
+      if(!s.end) continue;
       const st=new Date(s.start);
       if(st<from || st>to) continue;
       const key=ymd(st);
@@ -580,56 +649,6 @@
     const week=1+Math.round(((date-firstThursday)/86400000 - 3 + (firstThursday.getUTCDay()+6)%7)/7);
     return {y: date.getUTCFullYear(), w: week};
   }
-  function drawWeeklyTable(){
-    const {weeks}=weeklyBreakdown();
-    let html='';
-    for(const w of weeks){
-      html += `<div class="weekHeader">Week ${w.label} (${w.mon} → ${w.sun})</div>`;
-      html += `<table><thead><tr><th>Day</th><th>Date</th><th>Net minutes</th><th>HH:MM</th></tr></thead><tbody>`;
-      for(const d of w.days){
-        html += `<tr><td>${d.dayName}</td><td>${d.date}</td><td>${d.mins}</td><td>${fmtHHMM(d.mins)}</td></tr>`;
-      }
-      const weekTotal = w.days.reduce((a,b)=>a+b.mins,0);
-      html += `<tr><th colspan="2">Week total</th><th>${weekTotal}</th><th>${fmtHHMM(weekTotal)}</th></tr>`;
-      html += `</tbody></table>`;
-    }
-    weeklyTable.innerHTML = html || '<div class="small">No data in this range.</div>';
-  }
-  function drawReport(){
-    const {from,to}=rangeDates();
-    const list=sessions.filter(s=>s.end && new Date(s.start)>=from && new Date(s.start)<=to);
-    const totalM=list.reduce((a,s)=>a+netMins(s),0);
-    repSummary.textContent=`${list.length} session(s) • Total ${fmtHM(totalM)} • ${from.toLocaleDateString()} → ${to.toLocaleDateString()}`;
-
-    // Chart
-    const grp=repGroup.value;
-    const c=document.getElementById('repChart'); const ctx=c.getContext('2d');
-    ctx.clearRect(0,0,c.width,c.height);
-    if(grp==='none'){ ctx.fillStyle='#a9b0bb'; ctx.font='14px system-ui'; ctx.fillText('Chart disabled.', 10, 24); }
-    else {
-      let labels=[], values=[], title='';
-      if(grp==='week'){ ({labels,values}=groupByWeek(list)); title='Weekly total'; }
-      if(grp==='month'){ ({labels,values}=groupByMonth(list)); title='Monthly total'; }
-      if(values.length){
-        const W=c.width, H=c.height, pad=30, bw=Math.max(12,(W-2*pad)/values.length - 8);
-        const max=Math.max(...values,60);
-        ctx.fillStyle='#e6e9ef'; ctx.font='14px system-ui'; ctx.fillText(title,10,18);
-        ctx.strokeStyle='#2b2f3c'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
-        const scale=(H-2*pad)/max;
-        values.forEach((v,i)=>{
-          const x=pad + i*((W-2*pad)/values.length) + 4;
-          const h=v*scale; const y=H-pad-h;
-          ctx.fillStyle='#0a84ff'; ctx.fillRect(x,y,bw,h);
-        });
-        ctx.fillStyle='#a9b0bb'; ctx.font='10px system-ui';
-        labels.forEach((lb,i)=>{ const x=pad + i*((W-2*pad)/values.length) + 4; ctx.fillText(lb, x, H-10); });
-      } else {
-        ctx.fillStyle='#a9b0bb'; ctx.font='14px system-ui'; ctx.fillText('No grouped data for this range.', 10, 24);
-      }
-    }
-
-    drawWeeklyTable();
-  }
   function groupByWeek(list){
     const map=new Map();
     for(const s of list){
@@ -667,7 +686,6 @@
   });
 
   // ---------- Init ----------
-  // Fix any overnight runs on load
   normalizeMidnightSplits();
   refresh();
 
