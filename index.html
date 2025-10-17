@@ -14,6 +14,7 @@
     .wrap { max-width: 760px; margin: 0 auto; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
     header { display:flex; align-items:center; justify-content:space-between; padding:16px 0; }
     h1 { font-size: 22px; margin: 0; }
+    .toolbar { display:flex; gap:8px; }
     button.primary { width:100%; padding:18px 16px; font-size:22px; font-weight:600; border-radius:14px; border:none; background: var(--accent); color:white; }
     button.primary:active { transform: translateY(1px); }
     .status { text-align:center; margin: 8px 0 16px; color: var(--muted); }
@@ -33,7 +34,7 @@
     dialog { border:1px solid #2b2f3c; border-radius:12px; background:#12131a; color:var(--text); max-width:480px; width:calc(100% - 32px); }
     dialog::backdrop { background: rgba(0,0,0,0.5); }
     label { display:block; margin:10px 0 6px; }
-    input[type="number"], input[type="text"], textarea {
+    input[type="number"], input[type="text"], input[type="datetime-local"], textarea {
       width:100%; padding:10px; border-radius:10px; border:1px solid #2b2f3c; background:#0f1016; color:var(--text);
     }
     .footer-note { margin-top:14px; font-size:12px; color:var(--muted); text-align:center; }
@@ -67,8 +68,7 @@
     </div>
 
     <p class="footer-note">
-      Install this app: In Safari → <em>Share ▸ Add to Home Screen</em>.  
-      Works offline. Data stays on your device.
+      Install: Safari → <em>Share ▸ Add to Home Screen</em>. Works offline. Data stays on-device.
     </p>
   </div>
 
@@ -90,11 +90,18 @@
     </form>
   </dialog>
 
-  <!-- Edit dialog -->
+  <!-- Edit dialog (now includes start/end date-time) -->
   <dialog id="editDlg">
     <form method="dialog">
       <h3>Edit Session</h3>
       <div class="small" id="editWhen"></div>
+
+      <label>Start time</label>
+      <input type="datetime-local" id="editStart">
+
+      <label>End time</label>
+      <input type="datetime-local" id="editEnd">
+
       <label>Number of breaks</label>
       <input type="number" id="editBreakCount" min="0" max="20" step="1">
       <label>Total break minutes</label>
@@ -131,6 +138,19 @@
     x.setHours(0,0,0,0); x.setDate(x.getDate()-day); return x;
   }
   function startOfMonth(d=new Date()) { const x=new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
+
+  // Convert between ISO strings and <input type="datetime-local"> values (local time)
+  function toLocalDTValue(iso) {
+    const d = new Date(iso);
+    const tz = d.getTimezoneOffset() * 60000;
+    return new Date(d - tz).toISOString().slice(0,16); // "YYYY-MM-DDTHH:MM"
+  }
+  function fromLocalDTValue(val) {
+    // Interpret as local wall time; convert to ISO UTC
+    const d = new Date(val);
+    const tz = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() + tz).toISOString();
+  }
 
   // ---- UI Elements ----------------------------------------------------------
   const statusEl = $('#status'), timerEl = $('#timer'), toggleBtn = $('#toggleBtn');
@@ -183,7 +203,7 @@
           <div class="small">Worked (net): <strong>${net}</strong>${breaks}</div>
           ${note}
           <div class="actions">
-            ${s.end ? '<button class="btn btn-edit">Edit</button>' : ''}
+            ${s.end ? '<button class="btn btn-edit">Edit</button>' : '<button class="btn btn-edit">Edit</button>'}
             <button class="btn danger btn-delete">Delete</button>
           </div>
         </div>`;
@@ -199,10 +219,13 @@
   toggleBtn.addEventListener('click', () => {
     const open = sessions.find(isOpen);
     if (open) {
+      // Clock out now
       open.end = new Date().toISOString();
       persist();
+      // Prompt for breaks
       openBreaksDialog(open);
     } else {
+      // Safety: close any strays
       sessions.filter(isOpen).forEach(s => s.end = new Date().toISOString());
       sessions.push({ id: crypto.randomUUID(), start: new Date().toISOString(), end: null, breakCount: 0, breakMinutes: 0, note: "" });
       persist();
@@ -239,27 +262,58 @@
   }
   function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
 
-  // ---- Edit dialog ----------------------------------------------------------
-  const editDlg = $('#editDlg'), editWhen = $('#editWhen'), editBreakCount = $('#editBreakCount'),
-        editBreakMinutes = $('#editBreakMinutes'), editNote = $('#editNote');
+  // ---- Edit dialog (start/end + breaks + note) ------------------------------
+  const editDlg = $('#editDlg'), editWhen = $('#editWhen'),
+        editStart = $('#editStart'), editEnd = $('#editEnd'),
+        editBreakCount = $('#editBreakCount'), editBreakMinutes = $('#editBreakMinutes'),
+        editNote = $('#editNote');
+
   $('#cancelEdit').addEventListener('click', () => editDlg.close());
   $('#saveEdit').addEventListener('click', () => {
     const s = editDlg._session;
     if (!s) return;
-    s.breakCount = clamp(parseInt(editBreakCount.value||'0',10),0,20);
+
+    // Times from inputs (keep original if empty)
+    const newStart = editStart.value ? fromLocalDTValue(editStart.value) : s.start;
+    const newEnd   = editEnd.value ? fromLocalDTValue(editEnd.value)   : null;
+
+    // Validation
+    if (newEnd && new Date(newEnd) < new Date(newStart)) {
+      alert('End time cannot be before start time.');
+      return;
+    }
+    if (newEnd && new Date(newEnd) > new Date()) {
+      alert('End time cannot be in the future.');
+      return;
+    }
+
+    // Apply edits
+    s.start = newStart;
+    s.end   = newEnd; // allow clearing end to make it "running" again if you leave it blank
+
+    s.breakCount   = clamp(parseInt(editBreakCount.value||'0',10),0,20);
     s.breakMinutes = clamp(parseInt(editBreakMinutes.value||'0',10),0,480);
     s.note = editNote.value || "";
+
     persist(); editDlg.close(); refresh();
   });
+
   function onEdit(e) {
     const id = e.target.closest('.item').dataset.id;
     const s = sessions.find(x => x.id === id);
     if (!s) return;
+
     editDlg._session = s;
-    editWhen.textContent = `${fmtDT(s.start)} → ${fmtDT(s.end)}`;
+    const endText = s.end ? new Date(s.end).toLocaleString() : '(running)';
+    editWhen.textContent = `${new Date(s.start).toLocaleString()} → ${endText}`;
+
+    // Prefill fields
+    editStart.value = toLocalDTValue(s.start);
+    editEnd.value   = s.end ? toLocalDTValue(s.end) : ''; // blank if running
     editBreakCount.value = s.breakCount || 0;
     editBreakMinutes.value = s.breakMinutes || 0;
     editNote.value = s.note || "";
+
     editDlg.showModal();
   }
 
@@ -290,6 +344,7 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
   }
 
+  // Go!
   refresh();
   </script>
 </body>
